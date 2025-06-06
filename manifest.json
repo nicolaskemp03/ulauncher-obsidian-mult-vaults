@@ -11,7 +11,7 @@
     {
       "id": "obsidian_vaults",
       "type": "input",
-      "name": "Vault",
+      "name": "Vault Paths",
       "description": "Paths to your vaults (absolute / , separated)",
       "default_value": ""
     },

@@ -45,7 +45,40 @@ class ObisidanExtension(Extension):
 
 class ItemEnterEventListener(EventListener):
     def on_event(self, event, extension):
-        vault = extension.preferences["obsidian_vault"]
+        # The code starts here, indented by 4 spaces (or 1 tab, if that's what your VS Code is set to)
+        # It's crucial that this line and all lines below it are at the same indentation level
+        # as the 'vault = extension.preferences["obsidian_vault"]' line was.
+
+        vault_paths_str = extension.preferences.get("obsidian_vaults", "").strip()
+
+        if not vault_paths_str:
+            return RenderResultListAction([
+                ExtensionResultItem(icon='images/icon.png',
+                                    name='Obsidian Vaults Not Configured',
+                                    description='Please set your Obsidian vault paths in Ulauncher preferences (comma-separated).',
+                                    highlightable=False,
+                                    on_enter=HideWindowAction())
+            ])
+
+        vault_paths = [path.strip() for path in vault_paths_str.split(',') if path.strip()]
+
+        if not vault_paths: # This 'if' should be at the same level as the 'vault_paths_str =' line above it.
+             return RenderResultListAction([
+                ExtensionResultItem(icon='images/icon.png',
+                                    name='No Valid Obsidian Vault Paths',
+                                    description='Please enter at least one valid path in Ulauncher preferences.',
+                                    highlightable=False,
+                                    on_enter=HideWindowAction())
+            ])
+
+        # This original 'if' statement should also be at the same indentation level
+        # as the 'vault_paths_str =' line.
+        if isinstance(event, KeywordQueryEvent):
+            query = event.get_argument() or ""
+            items = []
+
+            # ... (rest of the on_event function's content will follow here, 
+            #      and will need further modifications as we continue)
         data = event.get_data()
         type = data.get("type")
 
@@ -90,7 +123,7 @@ class KeywordQueryEventListener(EventListener):
 
         keyword_search_note_vault = extension.preferences["obsidian_search_note_vault"]
         keyword_search_string_vault = extension.preferences[
-            "obsidian_search_string_vault"
+            "obsidian_esearch_string_vault"
         ]
         keyword_open_daily = extension.preferences["obsidian_open_daily"]
         keyword_quick_capture = extension.preferences["obsidian_quick_capture"]
