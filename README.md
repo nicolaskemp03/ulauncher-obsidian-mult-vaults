@@ -1,3 +1,5 @@
+# I am not a programmer, do not expect this to work.
+
 # Obsidian Ulauncher extension
 
 ![Screenshot](screenshot.png)
