@@ -9,10 +9,10 @@
   },
   "preferences": [
     {
-      "id": "obsidian_vault",
+      "id": "obsidian_vaults",
       "type": "input",
       "name": "Vault",
-      "description": "Path to your vault (absolute)",
+      "description": "Paths to your vaults (absolute / , separated)",
       "default_value": ""
     },
     {
