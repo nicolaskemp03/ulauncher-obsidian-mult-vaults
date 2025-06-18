@@ -283,6 +283,14 @@ def find_string_in_vault(vault_path: str, search: str) -> List[Note]: # Changed 
 
     return suggestions
 
+def create_note_in_vault(vault_path: str, name: str) -> str: # Changed 'vault' to 'vault_path'
+    path = os.path.join(vault_path, name + ".md") # Use vault_path
+    if not os.path.isfile(path):
+        with open(path, "w", encoding="utf-8") as f: # Added encoding
+            f.write(f"# {name}")
+    return path
+
+
 
 def append_to_note_in_vault(vault_path: str, file_name_or_path: str, content: str): # New parameters names
     """
@@ -315,17 +323,6 @@ def append_to_note_in_vault(vault_path: str, file_name_or_path: str, content: st
         f.write(os.linesep) # Add a newline before appending
         f.write(content)
 
-
-def append_to_note_in_vault(vault: str, file: str, content: str):
-    if file == "":
-        file = get_daily_path(vault).path
-    elif not file.endswith(".md"):
-        file = file + ".md"
-    path = os.path.join(vault, file)
-
-    with open(path, "a") as f:
-        f.write(os.linesep)
-        f.write(content)
 
 
 if __name__ == "__main__":
