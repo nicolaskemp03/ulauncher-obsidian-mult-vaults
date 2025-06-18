@@ -1,8 +1,10 @@
 import os
 import gi
 from ulauncher.api.shared.action.ExtensionCustomAction import ExtensionCustomAction
+from gi.repository import Notify
 
 gi.require_version("Gdk", "3.0")
+gi.require_version("Notify", "0.7")
 from src.items import quick_capture_note, show_notes, create_note, select_note, cancel
 from src.functions import (
     append_to_note_in_vault,
@@ -45,78 +47,188 @@ class ObisidanExtension(Extension):
 
 
 class ItemEnterEventListener(EventListener):
+    def __init__(self):
+        # This will store temporary data needed across multiple Ulauncher interactions
+        # For example, the content for quick capture when a note is being selected.
+        self.context_data = {}
+
     def on_event(self, event, extension):
         data = event.get_data()
         type = data.get("type")
 
+        # Get general preferences which might be needed for fallbacks or specific logic
+        # This should only be used as a fallback or for general configuration,
+        # specific vault info should come from 'data'.
+        vault_paths_str = extension.preferences.get("obsidian_vaults", "").strip()
+        vault_paths = [path.strip() for path in vault_paths_str.split(',') if path.strip()]
+
+        # --- Your existing 'cancel' logic (no change needed) ---
         if type == "cancel":
-            extension.reset()
+            extension.reset() # This resets extension.state and extension.content
+            self.context_data = {} # Also clear context_data
             return SetUserQueryAction("")
 
+        # --- Modified 'create-note' when in 'quick-capture-to-note' state ---
         elif type == "create-note" and extension.state == "quick-capture-to-note":
-            # Need to know which vault to create the note in.
-            # Assuming 'create-note' action from quick_capture_note/create_note also carries vault info
-            target_vault_path = data.get("full_vault_path") or vault_paths[0] # Fallback to first vault if not explicitly passed
-            path = create_note_in_vault(target_vault_path, data.get("name"))
-            append_to_note_in_vault(target_vault_path, path, extension.content)
-            extension.reset()
-            return HideWindowAction()
+            # Data for create-note action now comes from src/items.py's create_note
+            target_vault_path = data.get("full_vault_path")
+            target_vault_name = data.get("vault_name")
+            note_name_to_create = data.get("name") # This is the user's typed name for the new note
 
-        elif type == "create-note":
-            # Need to know which vault to create the note in.
-            # Assuming 'create-note' action from create_note also carries vault info
-            target_vault_path = data.get("full_vault_path") or vault_paths[0] # Fallback to first vault
-            target_vault_name = os.path.basename(target_vault_path) # Need the name for the URL
-            path = create_note_in_vault(target_vault_path, data.get("name"))
-            url = generate_url(target_vault_name, path, target_vault_path) # generate_url will need to handle full_path
-            return OpenAction(url)
+            # Retrieve content to append from context_data
+            content_to_append = self.context_data.get("content", "")
 
+            if not target_vault_path or not note_name_to_create or not content_to_append:
+                logger.error(f"Missing data for create-note with quick-capture: {data}, content: {content_to_append}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", "Missing data to create/append note.", None).show()
+                extension.reset()
+                self.context_data = {}
+                return HideWindowAction()
+
+            try:
+                # 1. Create the new note file
+                created_note_full_path = create_note_in_vault(target_vault_path, note_name_to_create)
+
+                # 2. Append content to the newly created note
+                append_to_note_in_vault(target_vault_path, created_note_full_path, content_to_append)
+
+                # 3. Generate URL and open
+                url = generate_url(target_vault_name, created_note_full_path, target_vault_path)
+
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Success", f"Created and appended to '{note_name_to_create}' in '{target_vault_name}' vault.", None).show()
+                extension.reset()
+                self.context_data = {}
+                return OpenAction(url)
+            except Exception as e:
+                logger.error(f"Error creating/appending note in quick-capture-to-note state: {e}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", f"Failed to create/append note: {e}", None).show()
+                extension.reset()
+                self.context_data = {}
+                return HideWindowAction()
+
+
+        # --- Modified 'create-note' (general, not quick-capture) ---
+        elif type == "create-note": # This handles the 'o cn <name>' or 'o search <name>' -> Create option
+            target_vault_path = data.get("full_vault_path")
+            target_vault_name = data.get("vault_name")
+            note_name_to_create = data.get("name")
+
+            if not target_vault_path or not note_name_to_create:
+                logger.error(f"Missing data for general create-note: {data}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", "Missing data to create note.", None).show()
+                return HideWindowAction()
+
+            try:
+                path = create_note_in_vault(target_vault_path, note_name_to_create)
+                url = generate_url(target_vault_name, path, target_vault_path) # Uses target_vault_name for URI
+
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Success", f"Created note '{note_name_to_create}' in '{target_vault_name}' vault.", None).show()
+                return OpenAction(url)
+            except Exception as e:
+                logger.error(f"Error creating general note: {e}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", f"Failed to create note: {e}", None).show()
+                return HideWindowAction()
+
+
+        # --- Modified 'quick-capture' (to daily note) ---
         elif type == "quick-capture":
-            # The quick_capture_note item needs to pass the vault info
-            target_vault_path = data.get("full_vault_path") # Get target vault from passed data
-            if not target_vault_path: # Fallback if not passed
-                target_vault_path = extension.preferences.get("obsidian_vaults", "").split(',')[0].strip() # Get first vault
+            content = data.get("content")
+            target_vault_path = data.get("full_vault_path")
+            target_vault_name = data.get("vault_name")
 
-            quick_capture_note_path = extension.preferences["obsidian_quick_capture_note"] # This is the FILENAME, not a path
-            # append_to_note_in_vault needs vault_path, filename, and content
-            append_to_note_in_vault(target_vault_path, quick_capture_note_path, data.get("content"))
-            return HideWindowAction()
+            if not target_vault_path or not content:
+                logger.error(f"Missing data for quick-capture: {data}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", "Missing data for quick capture.", None).show()
+                return HideWindowAction()
 
+            try:
+                # If obsidian_quick_capture_note is defined, use that filename. Otherwise, append to daily.
+                # append_to_note_in_vault handles if file_name_or_path is empty (goes to daily)
+                quick_capture_note_filename = extension.preferences.get("obsidian_quick_capture_note", "").strip()
+
+                append_to_note_in_vault(target_vault_path, quick_capture_note_filename, content)
+
+                Notify.init("Ulauncher Obsidian")
+                note_target_description = "daily note" if not quick_capture_note_filename else f"'{quick_capture_note_filename}'"
+                Notify.Notification.new("Obsidian Success", f"Appended to {note_target_description} in '{target_vault_name}' vault.", None).show()
+                return HideWindowAction()
+            except Exception as e:
+                logger.error(f"Error during quick capture: {e}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", f"Failed to quick capture: {e}", None).show()
+                return HideWindowAction()
+
+        # --- Modified 'quick-capture-to-note' (initial trigger) ---
         elif type == "quick-capture-to-note":
             keyword_quick_capture = extension.preferences["obsidian_quick_capture"]
             extension.state = "quick-capture-to-note"
-            extension.content = data.get("content")
+            self.context_data["content"] = data.get("content", "") # Store content in context
+
+            # Set user query to initiate a search within quick-capture context
+            # This will trigger KeywordQueryEventListener for the next input
             return SetUserQueryAction(keyword_quick_capture + " ")
 
+        # --- Modified 'select-note' (after searching for note to append to) ---
         elif extension.state == "quick-capture-to-note" and type == "select-note":
-            # 'data.get("note")' likely returns an object with .path, .vault_name, .full_vault_path
-            selected_note_data = data.get("note")
-            if selected_note_data:
-                quick_capture_note_path = selected_note_data['path'] # Full path to the selected note file
-                target_vault_path = selected_note_data['full_vault_path'] # Full path to its vault
+            selected_note_data = data.get("selected_note_data") # This is now a dictionary
+            content_to_append = self.context_data.get("content", "") # Retrieve content from context
 
-                # append_to_note_in_vault needs vault_path, file_path, and content
-                append_to_note_in_vault(target_vault_path, quick_capture_note_path, extension.content)
+            if not selected_note_data or not content_to_append:
+                logger.error(f"Missing data for select-note with quick-capture: {data}, content: {content_to_append}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", "Missing data to append to selected note.", None).show()
                 extension.reset()
+                self.context_data = {}
                 return HideWindowAction()
-            else:
-                return HideWindowAction() # Fallback if note data is missing
 
+            note_name = selected_note_data.get("name")
+            note_path = selected_note_data.get("path") # Full path of the selected file
+            vault_name = selected_note_data.get("vault_name")
+            full_vault_path = selected_note_data.get("full_vault_path")
+
+            try:
+                # append_to_note_in_vault needs vault_path and the specific file_path within that vault
+                append_to_note_in_vault(full_vault_path, note_path, content_to_append)
+
+                # Generate URL to open the selected note
+                url = generate_url(vault_name, note_path, full_vault_path)
+
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Success", f"Appended to '{note_name}' in '{vault_name}' vault.", None).show()
+                extension.reset()
+                self.context_data = {} # Clear context after successful operation
+                return OpenAction(url)
+            except Exception as e:
+                logger.error(f"Error appending to selected note: {e}")
+                Notify.init("Ulauncher Obsidian")
+                Notify.Notification.new("Obsidian Error", f"Failed to append to selected note: {e}", None).show()
+                extension.reset()
+                self.context_data = {}
+                return HideWindowAction()
+
+        # --- Default/Fallback action ---
         return DoNothingAction()
 
 
 class KeywordQueryEventListener(EventListener):
     def on_event(self, event, extension):
-        # Get multiple vault paths from preferences (using the new ID)
+        # Get multiple vault paths from preferences
         vault_paths_str = extension.preferences.get("obsidian_vaults", "").strip()
 
-        # Handle empty configuration
+        # --- Handle empty configuration ---
         if not vault_paths_str:
             return RenderResultListAction([
                 ExtensionResultItem(icon='images/icon.png',
                                     name='Obsidian Vaults Not Configured',
                                     description='Please set your Obsidian vault paths in Ulauncher preferences (comma-separated).',
-                                    highlightable=False) # No on_enter action needed here, just inform
+                                    highlightable=False)
             ])
 
         # Split the string into a list of individual paths and clean them up
@@ -131,116 +243,121 @@ class KeywordQueryEventListener(EventListener):
                                     highlightable=False)
             ])
 
-        # --- Continue with the original preference retrievals ---
+        # --- Retrieve keywords and settings ---
         keyword_search_note_vault = extension.preferences["obsidian_search_note_vault"]
-        keyword_search_string_vault = extension.preferences[
-            "obsidian_search_string_vault"
-        ]
+        keyword_search_string_vault = extension.preferences["obsidian_search_string_vault"]
         keyword_open_daily = extension.preferences["obsidian_open_daily"]
         keyword_quick_capture = extension.preferences["obsidian_quick_capture"]
         number_of_notes = int(extension.preferences.get("number_of_notes", 8))
 
         keyword = event.get_keyword()
-        search = event.get_argument()
+        search = event.get_argument() # User's query after the keyword
 
+        items = [] # List to collect all result items
 
+        # --- Quick Capture to Note (Step 2: User is searching for a note to append to) ---
         if extension.state == "quick-capture-to-note":
-            all_notes = []
-            for vault_path in vault_paths: # Loop through each vault
-                vault_name = os.path.basename(vault_path)
-                # We need to modify find_note_in_vault to accept vault_path
-                notes_in_vault = find_note_in_vault(vault_path, search)
-                for note_data in notes_in_vault: # notes_in_vault will return a list of dicts or custom objects
-                    # Ensure 'note_data' has 'path' and 'name'
-                    note_data['vault_name'] = vault_name
-                    note_data['full_vault_path'] = vault_path
-                    all_notes.append(note_data)
-
-            # Sort if desired, e.g., by note name
-            all_notes.sort(key=lambda x: x.get('name', '').lower())
-
-            # Pass all_notes to select_note. We'll need to adapt select_note.
-            items = select_note(all_notes, number_of_notes) 
-            items += create_note(search) # This might also need vault context if creating in a specific vault
-            items += cancel()
-            return RenderResultListAction(items)
-
-        if keyword == keyword_search_note_vault:
-            all_notes = []
+            all_notes_for_selection = []
             for vault_path in vault_paths:
-                vault_name = os.path.basename(vault_path)
-                # find_note_in_vault will need to accept vault_path
+                # find_note_in_vault now takes vault_path directly
                 notes_in_vault = find_note_in_vault(vault_path, search)
-                for note_data in notes_in_vault:
-                    note_data['vault_name'] = vault_name
-                    note_data['full_vault_path'] = vault_path
-                    all_notes.append(note_data)
+                all_notes_for_selection.extend(notes_in_vault)
 
-            all_notes.sort(key=lambda x: x.get('name', '').lower()) # Sort by note name
+            # Sort the results (e.g., by name for consistency)
+            all_notes_for_selection.sort(key=lambda note: note.name.lower())
 
-            # show_notes will need to be adapted to handle the new note_data structure
-            items = show_notes(all_notes, number_of_notes) # No longer passes a single 'vault' here directly
-            items += create_note(search) # This might still need a default vault
-            items += cancel()
+            items.extend(select_note(all_notes_for_selection, number_of_notes))
+            items.extend(create_note(search, vault_paths)) # Offer to create a new note to append to
+            items.extend(cancel())
             return RenderResultListAction(items)
 
+
+        # --- Search Note by Name (keyword_search_note_vault) ---
+        elif keyword == keyword_search_note_vault:
+            all_found_notes = []
+            for vault_path in vault_paths:
+                # find_note_in_vault returns Note objects which now have vault_name and full_vault_path
+                found_in_vault = find_note_in_vault(vault_path, search)
+                all_found_notes.extend(found_in_vault)
+
+            # Sort aggregated notes (e.g., by name)
+            all_found_notes.sort(key=lambda note: note.name.lower())
+
+            items.extend(show_notes(all_found_notes, number_of_notes)) # show_notes no longer needs a separate 'vault' argument
+
+            # If no notes found, offer to create
+            if not all_found_notes and search:
+                items.extend(create_note(search, vault_paths)) # Pass vault_paths for multi-vault creation
+
+            items.extend(cancel())
+            return RenderResultListAction(items)
+
+
+        # --- Search String in Note Content (keyword_search_string_vault) ---
         elif keyword == keyword_search_string_vault:
-            all_notes = [] # 'all_notes' will contain matches with preview snippets
+            all_found_notes_by_string = []
             for vault_path in vault_paths:
-                vault_name = os.path.basename(vault_path)
-                # find_string_in_vault will need to accept vault_path
-                notes_in_vault = find_string_in_vault(vault_path, search)
-                for note_data in notes_in_vault: # Assuming note_data includes 'preview' for content matches
-                    note_data['vault_name'] = vault_name
-                    note_data['full_vault_path'] = vault_path
-                    all_notes.append(note_data)
+                # find_string_in_vault returns Note objects with description as context
+                found_in_vault = find_string_in_vault(vault_path, search)
+                all_found_notes_by_string.extend(found_in_vault)
 
-            all_notes.sort(key=lambda x: x.get('name', '').lower())
+            # Sort aggregated notes
+            all_found_notes_by_string.sort(key=lambda note: note.name.lower())
 
-            # show_notes will need to handle content matches as well
-            items = show_notes(all_notes, number_of_notes)
-            items += create_note(search)
-            items += cancel()
+            items.extend(show_notes(all_found_notes_by_string, number_of_notes))
+
+            # If no notes found, offer to create a new one
+            if not all_found_notes_by_string and search:
+                items.extend(create_note(search, vault_paths)) # Pass vault_paths
+
+            items.extend(cancel())
             return RenderResultListAction(items)
 
+
+        # --- Open Daily Note (keyword_open_daily) ---
         elif keyword == keyword_open_daily:
-            if not vault_paths:
-                return RenderResultListAction([
-                    ExtensionResultItem(icon='images/icon.png',
-                                        name='No Vaults Configured',
-                                        description='Cannot open daily note without a configured vault.',
-                                        highlightable=False)
-                ])
+            daily_note_options = []
+            for vault_path in vault_paths:
+                vault_name = os.path.basename(vault_path)
+                # generate_daily_url now requires vault_name and full_vault_path
+                daily_url = generate_daily_url(vault_name, vault_path) 
+                daily_note_options.append(
+                    ExtensionResultItem(
+                        icon='images/icon.png',
+                        name=f"Open Daily Note ({vault_name})",
+                        description=f"Opens today's daily note in the '{vault_name}' vault.",
+                        on_enter=OpenAction(daily_url)
+                    )
+                )
+            # If there's only one vault, automatically open it. Otherwise, show options.
+            if len(daily_note_options) == 1:
+                return RenderResultListAction(daily_note_options)
             else:
-                # For simplicity, open the daily note in the first configured vault
-                target_vault_path = vault_paths[0]
-                target_vault_name = os.path.basename(target_vault_path)
-
-                # generate_daily_url will need to accept vault_name
-                daily_note_url = generate_daily_url(target_vault_name) 
-                return OpenAction(daily_note_url)
-            
-        elif keyword == keyword_quick_capture:
-            if not vault_paths:
-                return RenderResultListAction([
-                    ExtensionResultItem(icon='images/icon.png',
-                                        name='No Vaults Configured',
-                                        description='Cannot quick capture without a configured vault.',
-                                        highlightable=False)
-                ])
-            else:
-                # For quick capture, we need to pass the target vault name/path
-                # quick_capture_note will need to be adapted to accept this
-                # For simplicity, we'll pass the first vault's name and path
-                target_vault_path = vault_paths[0]
-                target_vault_name = os.path.basename(target_vault_path)
-
-                # Now, quick_capture_note needs to be adjusted to accept vault info.
-                # It likely prepares an item that triggers 'quick-capture' type in ItemEnterEventListener
-                # We'll need to pass the target_vault_path/name through it.
-                items = quick_capture_note(search, target_vault_name, target_vault_path) # Pass new args
+                items.extend(daily_note_options)
+                items.extend(cancel()) # Allow canceling if multiple options are shown
                 return RenderResultListAction(items)
 
+
+        # --- Quick Capture (keyword_quick_capture) ---
+        elif keyword == keyword_quick_capture:
+            # Offer quick capture options for each vault
+            quick_capture_results = []
+            for vault_path in vault_paths:
+                vault_name = os.path.basename(vault_path)
+                # quick_capture_note now requires content, vault_name, and full_vault_path
+                quick_capture_results.extend(quick_capture_note(search, vault_name, vault_path))
+
+            # If there's content, and only one vault, just show those two items.
+            # Otherwise, show options + cancel
+            if len(quick_capture_results) == 2 and not search: # 'Quick Capture' and 'Quick Capture to Note' for one vault
+                # If no search content, and only one vault, this might be a default.
+                pass # Let it go to the cancel + results below
+
+            items.extend(quick_capture_results)
+            items.extend(cancel())
+            return RenderResultListAction(items)
+
+        # --- Default/No Match ---
         return DoNothingAction()
 
 
