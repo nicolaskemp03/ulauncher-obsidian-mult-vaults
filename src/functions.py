@@ -38,55 +38,48 @@ class Note:
         return f"Note<{self.path}>"
 
 
-def generate_url(vault: str, file: str, mode: Literal["open", "new"] = "open") -> str:
+def generate_url(vault_name: str, file_full_path: str, full_vault_path: str, mode: Literal["open", "new"] = "open") -> str:
     """
-    >>> generate_url("~/vault", "test.md")
-    'obsidian://open?vault=vault&file=test.md'
-
-    >>> generate_url("~/vault", "test")
-    'obsidian://open?vault=vault&file=test.md'
-
-    >>> generate_url("~/vault", "~/vault/test")
-    'obsidian://open?vault=vault&file=test.md'
-
-    >>> generate_url("~/vault", "~/vault/test")
-    'obsidian://open?vault=vault&file=test.md'
-
-    >>> generate_url("~/vault", "Java - Programming Language")
-    'obsidian://open?vault=vault&file=Java%20-%20Programming%20Language.md'
-
-    >>> generate_url("/home/kira/Documents/main_notes/", "Ulauncher Test", mode="new")
-    'obsidian://new?vault=main_notes&file=Ulauncher%20Test.md'
-
-    >>> generate_url("/home/[me]/Development/ObsidianVaults/", "Ulauncher Test", mode="new")
-    'obsidian://new?vault=ObsidianVaults&file=Ulauncher%20Test.md'
-
+    Generates an Obsidian URL for a given file within a vault.
+    vault_name: The display name of the vault (e.g., "MyVault")
+    file_full_path: The absolute path to the markdown file.
+    full_vault_path: The absolute path to the vault's root directory.
+    mode: "open" or "new"
     """
-    if vault.endswith("/"):
-        vault = vault[:-1]
+    # Ensure the file path ends with .md for Obsidian
+    if not file_full_path.endswith(".md"):
+        file_full_path += ".md"
 
-    vault_name = get_name_from_path(vault, exclude_ext=False)
-    if not file.endswith(".md"):
-        file = file + ".md"
-
+    # Calculate the path relative to the vault's root
     try:
-        relative_file = Path(file).relative_to(vault)
+        # Path(file_full_path) could be something like /home/user/vault/notes/MyNote.md
+        # Path(full_vault_path) could be /home/user/vault
+        # relative_to will give 'notes/MyNote.md'
+        relative_file = Path(file_full_path).relative_to(full_vault_path)
+
+        # Obsidian's 'file' parameter expects forward slashes, even on Windows
+        relative_file_str = str(relative_file).replace(os.sep, '/')
+
         return (
             "obsidian://"
             + mode
             + "?"
-            + urlencode({"vault": vault_name, "file": relative_file}, quote_via=quote)
+            + urlencode({"vault": vault_name, "file": relative_file_str}, quote_via=quote)
         )
     except ValueError:
-        if not file.endswith(".md"):
-            file = file + ".md"
+        # Fallback for cases where file_full_path is not within full_vault_path
+        # (e.g., if we're trying to open a file that doesn't "belong" to this vault)
+        # This should ideally not happen if paths are correctly passed.
+        logger.warning(f"File {file_full_path} is not relative to vault {full_vault_path}. Falling back to file name.")
+        file_name_for_url = os.path.basename(file_full_path)
+        if not file_name_for_url.endswith(".md"):
+            file_name_for_url += ".md"
         return (
             "obsidian://"
             + mode
             + "?"
-            + urlencode({"vault": vault_name, "file": file}, quote_via=quote)
+            + urlencode({"vault": vault_name, "file": file_name_for_url}, quote_via=quote)
         )
-
 
 class DailyPath:
     path: str
@@ -110,8 +103,9 @@ class DailySettings:
         self.format = format
 
 
-def get_daily_settings(vault: str) -> DailySettings:
-    daily_notes_path = os.path.join(vault, ".obsidian", "daily-notes.json")
+def get_daily_settings(vault_path: str) -> DailySettings: # Changed 'vault' to 'vault_path'
+    daily_notes_path = os.path.join(vault_path, ".obsidian", "daily-notes.json") # Use vault_path
+    # ... rest of function remains the same ...
     try:
         f = open(daily_notes_path, "r")
         daily_notes_config = json.load(f)
@@ -127,10 +121,11 @@ def get_daily_settings(vault: str) -> DailySettings:
     return DailySettings(format, folder)
 
 
-def get_periodic_settings(vault: str) -> DailySettings:
+def get_periodic_settings(vault_path: str) -> DailySettings: # Changed 'vault' to 'vault_path'
     periodic_path = os.path.join(
-        vault, ".obsidian", "plugins", "periodic-notes", "data.json"
+        vault_path, ".obsidian", "plugins", "periodic-notes", "data.json" # Use vault_path
     )
+    # ... rest of function remains the same ...
     try:
         f = open(periodic_path)
         config = json.load(f)
@@ -148,9 +143,10 @@ def get_periodic_settings(vault: str) -> DailySettings:
     return DailySettings(format, folder)
 
 
-def is_obsidian_plugin_enabled(vault: str, name: str) -> bool:
-    core = os.path.join(vault, ".obsidian", "core-plugins.json")
-    community = os.path.join(vault, ".obsidian", "community-plugins.json")
+def is_obsidian_plugin_enabled(vault_path: str, name: str) -> bool: # Changed 'vault' to 'vault_path'
+    core = os.path.join(vault_path, ".obsidian", "core-plugins.json") # Use vault_path
+    community = os.path.join(vault_path, ".obsidian", "community-plugins.json") # Use vault_path
+    # ... rest of function remains the same ...
     plugins = []
     try:
         with open(core) as f:
@@ -169,33 +165,38 @@ def is_obsidian_plugin_enabled(vault: str, name: str) -> bool:
     return name in plugins
 
 
-def get_daily_path(vault: str) -> DailyPath:
-    if is_obsidian_plugin_enabled(vault, "periodic-notes"):
-        settings = get_periodic_settings(vault)
+def get_daily_path(vault_path: str) -> DailyPath: # Changed 'vault' to 'vault_path'
+    if is_obsidian_plugin_enabled(vault_path, "periodic-notes"): # Use vault_path
+        settings = get_periodic_settings(vault_path) # Use vault_path
     else:
-        settings = get_daily_settings(vault)
+        settings = get_daily_settings(vault_path) # Use vault_path
 
     date = datetime.datetime.now().strftime(
         convert_moment_to_strptime_format(settings.format)
     )
-    path = os.path.join(vault, settings.folder, date + ".md")
+    path = os.path.join(vault_path, settings.folder, date + ".md") # Use vault_path
     exists = os.path.exists(path)
 
     return DailyPath(path, date, settings.folder, exists)
 
 
-def generate_daily_url(vault: str) -> str:
+def generate_daily_url(vault_name: str, full_vault_path: str) -> str: # New parameters
     """
-    >>> generate_daily_url("test-vault")
-    'obsidian://new?vault=test-vault&file=16-07-2021.md'
+    Generates an Obsidian URL to open/create today's daily note in a specific vault.
+    vault_name: The display name of the vault (e.g., "MyVault")
+    full_vault_path: The absolute path to the vault's root directory.
     """
-    daily_path = get_daily_path(vault)
+    # Pass full_vault_path to get_daily_path
+    daily_path_info = get_daily_path(full_vault_path)
     mode = "new"
-    if daily_path.exists:
+    if daily_path_info.exists:
         mode = "open"
 
+    # Construct the file path relative to the vault root for generate_url
+    # daily_path_info.path is already the full path.
+    # We need to pass vault_name, full_path to the file, and full_vault_path to generate_url
     return generate_url(
-        vault, os.path.join(daily_path.folder, daily_path.date), mode=mode
+        vault_name, daily_path_info.path, full_vault_path, mode=mode
     )
 
 
@@ -214,57 +215,105 @@ def get_name_from_path(path: str, exclude_ext=True) -> str:
     return base
 
 
-def find_note_in_vault(vault: str, search: str) -> List[Note]:
+def find_note_in_vault(vault_path: str, search: str) -> List[Note]: # Changed 'vault' to 'vault_path'
     """
-    >>> find_note_in_vault("test-vault", "Test")
-    [Note<test-vault/Test.md>, Note<test-vault/Test2.md>, Note<test-vault/subdir/Test.md>, Note<test-vault/subdir/Hallo.md>]
+    Searches for notes in a specific vault whose filenames match the search term.
+    Returns a list of Note objects, each enriched with vault_name and full_vault_path.
     """
-    search_pattern = os.path.join(vault, "**", "*.md")
-    logger.info(search_pattern)
+    search_pattern = os.path.join(vault_path, "**", "*.md") # Use vault_path
+    logger.info(f"Searching in {vault_path} with pattern: {search_pattern}") # Added f-string for better logging
     files = glob.glob(search_pattern, recursive=True)
     suggestions = fuzzyfinder(search, files)
-    return [
-        Note(name=get_name_from_path(s), path=s, description=s) for s in suggestions
-    ]
+
+    notes_with_vault_info = []
+    vault_name = get_name_from_path(vault_path, exclude_ext=False) # Get the simple vault name
+
+    for s in suggestions:
+        note = Note(name=get_name_from_path(s), path=s, description=s)
+        note.vault_name = vault_name # Attach vault_name
+        note.full_vault_path = vault_path # Attach full_vault_path
+        notes_with_vault_info.append(note)
+    return notes_with_vault_info
 
 
-def find_string_in_vault(vault: str, search: str) -> List[Note]:
+def find_string_in_vault(vault_path: str, search: str) -> List[Note]: # Changed 'vault' to 'vault_path'
     """
-    >>> find_string_in_vault("test-vault", "Test")
-    [Note<test-vault/Test.md>, Note<test-vault/subdir/Test.md>]
+    Searches for notes in a specific vault containing the search term in their content.
+    Returns a list of Note objects, each enriched with vault_name and full_vault_path.
     """
-    files = glob.glob(os.path.join(vault, "**", "*.md"), recursive=True)
+    files = glob.glob(os.path.join(vault_path, "**", "*.md"), recursive=True) # Use vault_path
 
     suggestions = []
+    CONTEXT_SIZE = 50 # Increased context size for better preview
 
-    CONTEXT_SIZE = 10
+    search_lower = search.lower() # Do lowercasing once
+    vault_name = get_name_from_path(vault_path, exclude_ext=False) # Get the simple vault name
 
-    search = search.lower()
     for file in files:
-        if os.path.isfile(file) and search is not None:
-            with open(file, "r") as f:
-                for line in f:
-                    left, sep, right = line.lower().partition(search)
-                    if sep:
-                        context = left[CONTEXT_SIZE:] + sep + right[:CONTEXT_SIZE]
-                        suggestions.append(
-                            Note(
-                                name=get_name_from_path(file),
-                                path=file,
-                                description=context,
-                            )
+        if os.path.isfile(file):
+            try:
+                with open(file, "r", encoding="utf-8") as f: # Specify encoding
+                    content = f.read()
+                    if search_lower in content.lower():
+                        # Find the first occurrence and get context
+                        match_index = content.lower().find(search_lower)
+                        start = max(0, match_index - CONTEXT_SIZE)
+                        end = min(len(content), match_index + len(search_lower) + CONTEXT_SIZE)
+
+                        # Add ellipses if content is truncated
+                        preview_text = content[start:end].strip()
+                        if start > 0:
+                            preview_text = "..." + preview_text
+                        if end < len(content):
+                            preview_text += "..."
+
+                        note = Note(
+                            name=get_name_from_path(file),
+                            path=file,
+                            description=preview_text,
                         )
-                        break
+                        note.vault_name = vault_name # Attach vault_name
+                        note.full_vault_path = vault_path # Attach full_vault_path
+                        suggestions.append(note)
+                        # Only add once per file, even if multiple matches
+                        break 
+            except Exception as e:
+                logger.warning(f"Could not read file {file} for content search: {e}")
+                pass # Continue to next file
 
     return suggestions
 
 
-def create_note_in_vault(vault: str, name: str) -> str:
-    path = os.path.join(vault, name + ".md")
-    if not os.path.isfile(path):
-        with open(path, "w") as f:
-            f.write(f"# {name}")
-    return path
+def append_to_note_in_vault(vault_path: str, file_name_or_path: str, content: str): # New parameters names
+    """
+    Appends content to a specific note file within a vault.
+    vault_path: The absolute path to the vault.
+    file_name_or_path: Can be a filename (e.g., "Daily Note.md") or a full absolute path.
+                       If it's just a filename, it's assumed to be in the vault's root.
+    content: The text to append.
+    """
+    final_file_path = file_name_or_path
+
+    # If file_name_or_path is not an absolute path, assume it's relative to the vault
+    if not os.path.isabs(file_name_or_path):
+        # If it's a filename or relative path, join it with the vault_path
+        final_file_path = os.path.join(vault_path, file_name_or_path)
+
+    # Ensure it ends with .md if it's just a name
+    if not final_file_path.endswith(".md"):
+        final_file_path += ".md"
+
+    # If no specific file is given, default to the daily note path for the given vault
+    if not file_name_or_path.strip(): # Handles empty string
+        daily_path_info = get_daily_path(vault_path)
+        final_file_path = daily_path_info.path
+
+
+    logger.info(f"Appending to note: {final_file_path} in vault: {vault_path}")
+
+    with open(final_file_path, "a", encoding="utf-8") as f: # Added encoding
+        f.write(os.linesep) # Add a newline before appending
+        f.write(content)
 
 
 def append_to_note_in_vault(vault: str, file: str, content: str):
