@@ -133,7 +133,9 @@ class KeywordQueryEventListener(EventListener):
 
         # --- Continue with the original preference retrievals ---
         keyword_search_note_vault = extension.preferences["obsidian_search_note_vault"]
-        keyword_search_string_vault = extension.preferences["obsidian_search_string_vault"]
+        keyword_search_string_vault = extension.preferences[
+            "obsidian_search_string_vault"
+        ]
         keyword_open_daily = extension.preferences["obsidian_open_daily"]
         keyword_quick_capture = extension.preferences["obsidian_quick_capture"]
         number_of_notes = int(extension.preferences.get("number_of_notes", 8))
